@@ -1,0 +1,254 @@
+#!/usr/bin/env -S python3 -u
+from urllib.parse import urlparse
+import sys
+import ssl
+import os
+import socket
+
+# define global variable send messages for initializing connection
+AUTHMESSAGE = "AUTH TLS\r\n"
+PBSZMESSAGE = "PBSZ 0\r\n"
+PROTMESSAGE = "PROT P\r\n"
+TYPEMESSAGE = "TYPE I\r\n"
+MODEMESSAGE = "MODE S\r\n"
+QMESSAGE = "QUIT\r\n"
+PASSMESSAGE = "PASV\r\n"
+STRUMESSAGE = "STRU F\r\n"
+
+# gets all the command line arguements and cuts off the name of the program 
+inf = sys.argv[1:]
+# Set up default variables for command line info
+firstUrl = True
+op = ""
+unPUrl = ""
+loc = ""
+# Now, parse commane line info.
+# if input length is 3, check for url parameter
+if(len(inf) == 3):
+    op = inf[0]
+    if("fttps://" in inf[1]):
+        unPUrl = inf[1]
+        loc = inf[2]
+    elif("fttps://" in inf[2]):
+        unPUrl = inf[2]
+        loc = inf[1]
+        firstUrl = False
+    else:
+        print("There is no url.")
+# if input length is 2, first parameter must be url.
+elif(len(inf) == 2):
+    op = inf[0]
+    unPUrl = inf[1]
+    if("fttps://" not in unPUrl):
+        print("There is no url.")
+# if there are more or less arguements, the user has inputed incorrectly as there are only 1 or 2 parameters given with any command
+else:
+    print("Incorrect # of args.")
+
+
+
+# Define values pre input parse.
+hname = ""
+uname = ""
+pwd = ""
+defport = 21
+fpath = "/"
+
+# Now, parse the url.
+prsdUrl = urlparse(unPUrl, scheme = "ftp")
+hname = prsdUrl.hostname
+uname = prsdUrl.username
+pwd = prsdUrl.password
+if(prsdUrl.port != None):
+    defport = prsdUrl.port
+if(prsdUrl.path != ""):
+    fpath = prsdUrl.path
+
+# Creates a socket connection
+sock = socket.create_connection((hname, defport))
+init_recv_msg = sock.recv(8192)
+#print((recv_message_initial).decode())
+# Send initial authent. message.
+sock.send(AUTHMESSAGE.encode())
+auth_recv_msg = sock.recv(8192)
+#print((recv_message_auth).decode())
+# Wrap the socket using TLS
+tlsctxt = ssl.create_default_context()
+sock = tlsctxt.wrap_socket(sock, server_hostname=hname)
+
+#Send login, initialize env. messages
+sock.send(("USER " + uname + "\r\n").encode())
+user_recv_msg = sock.recv(8192)
+
+sock.send(("PASS " + pwd + "\r\n").encode())
+pass_recv_msg = sock.recv(8192)
+
+sock.send(PBSZMESSAGE.encode())
+pbsx_recv_msg = sock.recv(8192)
+
+sock.send(PROTMESSAGE.encode())
+prot_recv_message = sock.recv(8192)
+
+sock.send(TYPEMESSAGE.encode())
+type_recv_message = sock.recv(8192)
+
+sock.send(MODEMESSAGE.encode())
+mode_recv_message = sock.recv(8192)
+
+sock.send(STRUMESSAGE.encode())
+stru_recv_message = sock.recv(8192)
+
+# Now, delegate tasks based on command line inputs.
+if(op == "ls"):
+    #  Print directory listing at given url.
+    # Opens data channel.
+    sock.send(PASSMESSAGE.encode())
+    recvd = sock.recv(8192).decode()
+    # Parse the recieved message.
+    spl_recvd = recvd.split("(")
+    msg_pruning = spl_recvd[1].split(",")
+    ip_addr = msg_pruning[0] + "." + msg_pruning[1] + "." + msg_pruning[2] + "." + msg_pruning[3]
+    num_ports = [msg_pruning[4], msg_pruning[5].split(")")[0]]
+    portnum = ((int(num_ports[0]) * 256) + int(num_ports[1]))
+    #Send list command to server.
+    sock.send(("LIST " + fpath +"\r\n").encode())
+    #Create TLS socket.
+    sock_data_conn = socket.create_connection((ip_addr, portnum))
+    tlsctxt = ssl.create_default_context()
+    securesock = tlsctxt.wrap_socket(sock_data_conn, server_hostname=hname)
+    print(securesock.recv(8192).decode())
+    securesock.close()
+
+if(op == "mkdir"):
+    # Create new directory on FTPS server 
+    # at given url
+    sock.send(("MKD " + fpath + "\r\n").encode())
+    print(sock.recv(8192).decode())
+if(op == "rmdir"):
+    # Delete the directory on the FTPS server at given URL
+    sock.send(("RMD " + fpath + "\r\n").encode())
+    print(sock.recv(8192).decode())
+if(op == "rm"):
+    # Deletes the file on  FTPS server at the given URL
+    # at given url
+    sock.send(("DELE " + fpath + "\r\n").encode())
+    print(sock.recv(8192).decode())
+if(op == "cp"):
+    # Copy file given by first argument to the file given by
+    #  second argument.
+    
+    #check if first argument is url
+    if firstUrl:
+     # Establich channel
+        sock.send(PASSMESSAGE.encode())
+        recvd = sock.recv(8192).decode()
+        # print(recieved)
+        # parse recieved message
+        spl_recvd = recvd.split("(")
+        msg_pruning = spl_recvd[1].split(",")
+        ip_addr = msg_pruning[0] + "." + msg_pruning[1] + "." + msg_pruning[2] + "." + msg_pruning[3]
+        num_ports = [msg_pruning[4], msg_pruning[5].split(")")[0]]
+        portnum = ((int(num_ports[0]) * 256) + int(num_ports[1]))
+        #Send download command
+        sock.send(("RETR " + fpath +"\r\n").encode())
+        # Creates a secure socket.
+        sock_data_conn = socket.create_connection((ip_addr, portnum))
+        tlsctxt = ssl.create_default_context()
+        securesock = tlsctxt.wrap_socket(sock_data_conn, server_hostname=hname)
+        filecontents = securesock.recv(8192)
+        # writes the contents into a file, closes file and socket
+        file = open(loc, "wb")
+        file.write(filecontents)
+        file.close()
+        securesock.close()
+    # If url is not first parameter
+    else:
+        # Create data channel
+        sock.send(PASSMESSAGE.encode())
+        recvd = sock.recv(8192).decode()
+        # Parse recieved message
+        spl_recvd = recvd.split("(")
+        msg_pruning = spl_recvd[1].split(",")
+        ip_addr = msg_pruning[0] + "." + msg_pruning[1] + "." + msg_pruning[2] + "." + msg_pruning[3]
+        num_ports = [msg_pruning[4], msg_pruning[5].split(")")[0]]
+        portnum = ((int(num_ports[0]) * 256) + int(num_ports[1]))
+        # Send upload command to server
+        sock.send(("STOR " + loc +"\r\n").encode())
+        # Create secure socket
+        sock_data_conn = socket.create_connection((ip_addr, portnum))
+        tlsctxt = ssl.create_default_context()
+        securesock = tlsctxt.wrap_socket(sock_data_conn, server_hostname=hname)
+        # Open local file, read contents to another variable, send to server,
+        #  then close the file and the secure connection
+        file = open(loc, "rb")
+        file_conts = file.read()
+        securesock.send(file_conts)
+        securesock.close()
+        file.close()
+        
+if(op == "mv"):
+    # Move  file given by first argument to the file given by second argument..
+    # checks if first arg is Url.
+    if firstUrl:
+        # Create data channel.
+        sock.send(PASSMESSAGE.encode())
+        recvd = sock.recv(8192).decode()
+        # Parse recieved message
+        spl_recvd = recvd.split("(")
+        msg_pruning = spl_recvd[1].split(",")
+        ip_addr = msg_pruning[0] + "." + msg_pruning[1] + "." + msg_pruning[2] + "." + msg_pruning[3]
+        num_ports = [msg_pruning[4], msg_pruning[5].split(")")[0]]
+        portnum = ((int(num_ports[0]) * 256) + int(num_ports[1]))
+        
+    
+        # Send download command to server.
+        sock.send(("RETR " + fpath +"\r\n").encode())
+        
+        # Create secure socket.
+        sock_data_conn = socket.create_connection((ip_addr, portnum))
+        tlsctxt = ssl.create_default_context()
+        securesock = tlsctxt.wrap_socket(sock_data_conn, server_hostname=hname)
+        filecontents = securesock.recv(8192)
+        # Open file, write contents from server to it, close file and connection.
+        file = open(loc, "wb")
+        file.write(filecontents)
+        file.close()
+        securesock.close()
+        # Send delete command to server.
+        sock.send(("DELE " + fpath + "\r\n").encode())
+    # If url came second.
+    else:
+        # Create data channel.
+        sock.send(PASSMESSAGE.encode())
+        recvd = sock.recv(8192).decode()
+    
+        # Parse recieved message.
+        spl_recvd = recvd.split("(")
+        msg_pruning = spl_recvd[1].split(",")
+        ip_addr = msg_pruning[0] + "." + msg_pruning[1] + "." + msg_pruning[2] + "." + msg_pruning[3]
+        num_ports = [msg_pruning[4], msg_pruning[5].split(")")[0]]
+        portnum = ((int(num_ports[0]) * 256) + int(num_ports[1]))
+        
+        # Send upload command to server.
+        sock.send(("STOR " + loc +"\r\n").encode())
+        
+        # Create secure socket.
+        sock_data_conn = socket.create_connection((ip_addr, portnum))
+        tlsctxt = ssl.create_default_context()
+        securesock = tlsctxt.wrap_socket(sock_data_conn, server_hostname=hname)
+        
+        # Open local file, read contents to variable, send to server.
+        # Close file and connection.
+        file = open(loc, "rb")
+        file_conts = file.read()
+        securesock.send(file_conts)
+        securesock.close()
+        file.close()
+
+        # deleting the file from the local machine, effectively "moving" the file 
+        os.remove(loc)
+
+# Now ask the FTP to close connection 
+# Disconnect socket.
+sock.send(QMESSAGE.encode())
+sock.close()
